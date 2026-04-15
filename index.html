@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>💥 炸它！</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;}
+html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;font-family:'PingFang SC','Microsoft YaHei',sans-serif;}
+canvas{display:block;position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;}
+
+#ui{position:fixed;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none;}
+#header{pointer-events:auto;text-align:center;padding:20px 15px 0;}
+#title{font-size:clamp(22px,5vw,32px);color:#fff;text-shadow:0 0 20px rgba(255,100,50,.5);}
+#subtitle{font-size:13px;color:rgba(255,255,255,.4);margin-top:4px;}
+#combo-display{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-size:clamp(60px,15vw,120px);font-weight:900;color:transparent;pointer-events:none;z-index:10;opacity:0;transition:none;text-shadow:none;
+  -webkit-text-stroke:2px rgba(255,100,50,.3);}
+#combo-display.flash{opacity:1;color:#ff6432;text-shadow:0 0 40px rgba(255,100,50,.8),0 0 80px rgba(255,50,0,.4);-webkit-text-stroke:0;transition:opacity .3s;}
+#combo-display.fade{opacity:0;transition:opacity .8s;}
+
+#score-bar{pointer-events:auto;position:fixed;bottom:0;left:0;width:100%;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;background:linear-gradient(transparent,rgba(0,0,0,.5));}
+#score{font-size:18px;color:#ffdd57;font-weight:700;}
+#boom-count{font-size:14px;color:rgba(255,255,255,.5);}
+#reset-btn{pointer-events:auto;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;padding:6px 14px;border-radius:20px;font-size:13px;cursor:pointer;}
+#reset-btn:active{background:rgba(255,255,255,.25);}
+
+/* Floating targets */
+.target{position:absolute;z-index:2;pointer-events:auto;cursor:pointer;transition:transform .1s;font-size:clamp(52px,14vw,80px);filter:drop-shadow(0 4px 12px rgba(0,0,0,.4));animation:float 3s ease-in-out infinite;will-change:transform;}
+.target:active{transform:scale(1.15);}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+
+/* Explosion */
+.explosion{position:fixed;z-index:15;pointer-events:none;font-size:clamp(60px,16vw,100px);animation:explode .6s ease-out forwards;}
+@keyframes explode{0%{transform:scale(.3);opacity:1}50%{transform:scale(1.5);opacity:.8}100%{transform:scale(2);opacity:0}}
+
+/* Shake */
+.shake{animation:shake .3s ease-in-out;}
+@keyframes shake{0%,100%{transform:translate(0)}20%{transform:translate(-6px,4px)}40%{transform:translate(6px,-4px)}60%{transform:translate(-4px,6px)}80%{transform:translate(4px,-6px)}}
+
+/* Score popup */
+.score-pop{position:fixed;z-index:12;pointer-events:none;font-size:20px;font-weight:700;color:#ffdd57;text-shadow:0 0 10px rgba(255,221,87,.6);animation:scorePop .8s ease-out forwards;}
+@keyframes scorePop{0%{transform:translateY(0) scale(.8);opacity:1}100%{transform:translateY(-60px) scale(1.2);opacity:0}}
+
+/* Rage meter */
+#rage-wrap{pointer-events:auto;position:fixed;top:70px;left:50%;transform:translateX(-50%);width:clamp(150px,40vw,220px);z-index:5;}
+#rage-label{font-size:11px;color:rgba(255,255,255,.4);text-align:center;margin-bottom:3px;}
+#rage-track{width:100%;height:8px;background:rgba(255,255,255,.1);border-radius:4px;overflow:hidden;}
+#rage-fill{width:0%;height:100%;background:linear-gradient(90deg,#ff6b6b,#ff4757,#ff0000);border-radius:4px;transition:width .2s;}
+#rage-text{font-size:12px;color:rgba(255,255,255,.5);text-align:center;margin-top:3px;}
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<div id="ui">
+  <div id="header">
+    <div id="title">💥 炸它！</div>
+    <div id="subtitle">点哪炸哪，使劲造</div>
+  </div>
+  <div id="rage-wrap">
+    <div id="rage-label">怒气值</div>
+    <div id="rage-track"><div id="rage-fill"></div></div>
+    <div id="rage-text"></div>
+  </div>
+  <div id="combo-display"></div>
+  <div id="score-bar">
+    <span id="score">💥 0</span>
+    <span id="boom-count">已炸 0 个</span>
+    <button id="reset-btn">🔄 再来</button>
+  </div>
+</div>
+<script>
+(function(){
+'use strict';
+
+// === BG Canvas (dark particles) ===
+var bgCan=document.getElementById('bg'),bgCtx=bgCan.getContext('2d');
+var W,H;
+function resize(){W=bgCan.width=window.innerWidth;H=bgCan.height=window.innerHeight;}
+resize();window.addEventListener('resize',function(){resize();spawnTargets();});
+
+var embers=[];
+for(var i=0;i<40;i++) embers.push({x:Math.random()*2000,y:Math.random()*2000,r:Math.random()*2+.5,a:Math.random()*.3+.05,vy:-(Math.random()*.3+.1),vx:(Math.random()-.5)*.2,tw:Math.random()*6.28,ts:Math.random()*.02+.005});
+
+function bgLoop(){
+  bgCtx.fillStyle='#1a1a2e';bgCtx.fillRect(0,0,W,H);
+  for(var i=0;i<embers.length;i++){
+    var e=embers[i];e.x+=e.vx;e.y+=e.vy;e.tw+=e.ts;
+    if(e.y<-10){e.y=H+10;e.x=Math.random()*W;}
+    var a=e.a*(.5+.5*Math.sin(e.tw));
+    bgCtx.beginPath();bgCtx.arc(e.x%W,e.y,e.r,0,Math.PI*2);
+    bgCtx.fillStyle='rgba(255,120,50,'+a+')';bgCtx.fill();
+  }
+  requestAnimationFrame(bgLoop);
+}
+bgLoop();
+
+// === Audio Engine ===
+var ac=null;
+function initAudio(){if(!ac){try{ac=new(window.AudioContext||window.webkitAudioContext)();}catch(e){}}}
+
+function sndBoom(){
+  initAudio();if(!ac)return;
+  var n=ac.currentTime;
+  // Low thump
+  var o1=ac.createOscillator(),g1=ac.createGain();
+  o1.type='sine';o1.frequency.setValueAtTime(80+Math.random()*30,n);o1.frequency.exponentialRampToValueAtTime(20,n+.3);
+  g1.gain.setValueAtTime(.35,n);g1.gain.exponentialRampToValueAtTime(.001,n+.35);
+  o1.connect(g1);g1.connect(ac.destination);o1.start(n);o1.stop(n+.35);
+  // Noise burst (explosion crackle)
+  var buf=ac.createBuffer(1,ac.sampleRate*.15,ac.sampleRate);
+  var d=buf.getChannelData(0);for(var i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,2);
+  var ns=ac.createBufferSource(),ng=ac.createGain();
+  ns.buffer=buf;ng.gain.setValueAtTime(.25,n);ng.gain.exponentialRampToValueAtTime(.001,n+.2);
+  ns.connect(ng);ng.connect(ac.destination);ns.start(n);
+}
+
+function sndCombo(){
+  initAudio();if(!ac)return;
+  var n=ac.currentTime;
+  var o=ac.createOscillator(),g=ac.createGain();
+  o.type='triangle';o.frequency.setValueAtTime(400,n);o.frequency.linearRampToValueAtTime(900,n+.12);
+  g.gain.setValueAtTime(.15,n);g.gain.linearRampToValueAtTime(0,n+.2);
+  o.connect(g);g.connect(ac.destination);o.start(n);o.stop(n+.2);
+}
+
+function sndRageUp(){
+  initAudio();if(!ac)return;
+  var n=ac.currentTime;
+  var o=ac.createOscillator(),g=ac.createGain();
+  o.type='sawtooth';o.frequency.setValueAtTime(200,n);o.frequency.linearRampToValueAtTime(600,n+.2);
+  g.gain.setValueAtTime(.1,n);g.gain.linearRampToValueAtTime(0,n+.25);
+  o.connect(g);g.connect(ac.destination);o.start(n);o.stop(n+.25);
+}
+
+function sndBgHit(){
+  initAudio();if(!ac)return;
+  var n=ac.currentTime;
+  var o=ac.createOscillator(),g=ac.createGain();
+  o.type='sine';o.frequency.setValueAtTime(150,n);o.frequency.exponentialRampToValueAtTime(30,n+.15);
+  g.gain.setValueAtTime(.12,n);g.gain.exponentialRampToValueAtTime(.001,n+.15);
+  o.connect(g);g.connect(ac.destination);o.start(n);o.stop(n+.15);
+}
+
+// === Game State ===
+var score=0,boomCount=0,combo=0,comboTimer=null,rage=0;
+var TARGETS_EMOJI=['🏠','🚗','📱','💻','⏰','📚','🧱','🪑','🛒','🎒','📦','🧸','🏫','🏢','🗑️','📺','🧲','🔔','💡','🪟','🧊','🎈','🫖','🍳'];
+var EXPLOSION_EMOJI=['💥','🔥','💣','✨','⚡','☄️'];
+var RAGE_LEVELS=[
+  {min:0,text:'还行，继续砸',color:'#ff6b6b'},
+  {min:20,text:'有点上头了',color:'#ff4757'},
+  {min:50,text:'暴走模式！',color:'#ff3838'},
+  {min:80,text:'毁灭吧！！！',color:'#ff0000'},
+  {min:100,text:'🔥 无敌状态 🔥',color:'#ff0000'}
+];
+
+var scoreEl=document.getElementById('score');
+var boomEl=document.getElementById('boom-count');
+var comboEl=document.getElementById('combo-display');
+var rageFill=document.getElementById('rage-fill');
+var rageText=document.getElementById('rage-text');
+var resetBtn=document.getElementById('reset-btn');
+
+// === Targets ===
+var targets=[];
+var targetContainer=document.getElementById('ui');
+
+function spawnTargets(){
+  // Remove old
+  targets.forEach(function(t){if(t.el&&t.el.parentNode)t.el.parentNode.removeChild(t.el);});
+  targets=[];
+  var count=Math.min(Math.floor(W*H/28000),10);
+  if(count<4)count=4;
+  var safeTop=110,safeBot=70;
+  for(var i=0;i<count;i++){
+    var el=document.createElement('div');
+    el.className='target';
+    el.textContent=TARGETS_EMOJI[Math.floor(Math.random()*TARGETS_EMOJI.length)];
+    var tx=Math.random()*(W-80)+20;
+    var ty=safeTop+Math.random()*(H-safeTop-safeBot-60);
+    el.style.left=tx+'px';
+    el.style.top=ty+'px';
+    el.style.animationDelay=(Math.random()*2)+'s';
+    targetContainer.appendChild(el);
+    var tObj={el:el,x:tx,y:ty};
+    (function(obj){
+      obj.el.addEventListener('click',function(e){boom(e,obj);});
+      obj.el.addEventListener('touchstart',function(e){e.preventDefault();var t=e.touches[0];boom({clientX:t.clientX,clientY:t.clientY},obj);},{passive:false});
+    })(tObj);
+    targets.push(tObj);
+  }
+}
+
+function boom(e,tObj){
+  var x=e.clientX,y=e.clientY;
+
+  // Screen shake
+  document.body.classList.remove('shake');
+  void document.body.offsetWidth;
+  document.body.classList.add('shake');
+
+  // Explosion emoji
+  var exp=document.createElement('div');
+  exp.className='explosion';
+  exp.textContent=EXPLOSION_EMOJI[Math.floor(Math.random()*EXPLOSION_EMOJI.length)];
+  exp.style.left=(x-30)+'px';exp.style.top=(y-30)+'px';
+  document.body.appendChild(exp);
+  setTimeout(function(){exp.remove();},700);
+
+  // Particle burst on canvas
+  spawnBurst(x,y);
+
+  // Score
+  combo++;
+  clearTimeout(comboTimer);
+  comboTimer=setTimeout(function(){combo=0;},1500);
+
+  var pts=10;
+  if(combo>=10)pts=50;
+  else if(combo>=5)pts=30;
+  else if(combo>=3)pts=20;
+
+  if(rage>=80)pts*=2; // rage bonus
+
+  score+=pts;
+  boomCount++;
+
+  // Rage
+  rage=Math.min(100,rage+5);
+  updateRage();
+
+  // UI
+  scoreEl.textContent='💥 '+score;
+  boomEl.textContent='已炸 '+boomCount+' 个';
+
+  // Score popup
+  var pop=document.createElement('div');
+  pop.className='score-pop';
+  pop.textContent='+'+pts+(combo>=3?' x'+combo:'');
+  pop.style.left=(x-20)+'px';pop.style.top=(y-30)+'px';
+  document.body.appendChild(pop);
+  setTimeout(function(){pop.remove();},900);
+
+  // Combo display
+  if(combo>=3){
+    comboEl.textContent=combo+'连炸！';
+    comboEl.className='flash';
+    comboEl.setAttribute('id','combo-display');
+    setTimeout(function(){comboEl.className='fade';comboEl.setAttribute('id','combo-display');},400);
+  }
+
+  // Replace target
+  var el=tObj.el;
+  el.textContent=TARGETS_EMOJI[Math.floor(Math.random()*TARGETS_EMOJI.length)];
+  var safeTop=110,safeBot=70;
+  var nx=Math.random()*(W-80)+20;
+  var ny=safeTop+Math.random()*(H-safeTop-safeBot-60);
+  el.style.left=nx+'px';
+  el.style.top=ny+'px';
+  tObj.x=nx;tObj.y=ny;
+
+  // Sound
+  sndBoom();
+  if(combo>=3) sndCombo();
+  if(rage>=78&&rage<82) sndRageUp();
+  // Vibrate if supported
+  if(navigator.vibrate)navigator.vibrate(30);
+}
+
+// Also allow clicking empty space to create explosions
+document.getElementById('ui').addEventListener('click',function(e){
+  if(e.target.id==='ui'||e.target.id==='header'||e.target.id==='title'||e.target.id==='subtitle'){
+    var exp=document.createElement('div');
+    exp.className='explosion';
+    exp.textContent='💥';
+    exp.style.left=(e.clientX-30)+'px';exp.style.top=(e.clientY-30)+'px';
+    document.body.appendChild(exp);
+    setTimeout(function(){exp.remove();},700);
+    spawnBurst(e.clientX,e.clientY);
+    sndBgHit();
+    document.body.classList.remove('shake');
+    void document.body.offsetWidth;
+    document.body.classList.add('shake');
+    if(navigator.vibrate)navigator.vibrate(15);
+  }
+});
+
+function updateRage(){
+  rageFill.style.width=rage+'%';
+  var lvl=RAGE_LEVELS[0];
+  for(var i=RAGE_LEVELS.length-1;i>=0;i--){
+    if(rage>=RAGE_LEVELS[i].min){lvl=RAGE_LEVELS[i];break;}
+  }
+  rageText.textContent=lvl.text;
+  rageFill.style.background='linear-gradient(90deg,#ff6b6b,'+lvl.color+')';
+}
+
+// Rage decay
+setInterval(function(){
+  if(rage>0){rage=Math.max(0,rage-1);updateRage();}
+},500);
+
+// === Particle Burst (canvas overlay) ===
+var partCan=document.createElement('canvas');
+partCan.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;z-index:3;pointer-events:none;';
+document.body.appendChild(partCan);
+var pCtx=partCan.getContext('2d');
+partCan.width=W;partCan.height=H;
+window.addEventListener('resize',function(){partCan.width=W;partCan.height=H;});
+
+var sparks=[];
+function spawnBurst(cx,cy){
+  var n=rage>=80?30:15;
+  for(var i=0;i<n;i++){
+    var ang=Math.random()*Math.PI*2;
+    var spd=2+Math.random()*6;
+    var hue=Math.random()*60+10; // orange-yellow-red range
+    sparks.push({x:cx,y:cy,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,a:1,r:1.5+Math.random()*3,col:'hsl('+hue+',100%,'+(50+Math.random()*30)+'%)'});
+  }
+}
+
+function partLoop(){
+  pCtx.clearRect(0,0,partCan.width,partCan.height);
+  for(var i=sparks.length-1;i>=0;i--){
+    var s=sparks[i];
+    s.x+=s.vx;s.y+=s.vy;s.vy+=0.12;s.a-=0.015;s.vx*=0.98;
+    if(s.a<=0){sparks.splice(i,1);continue;}
+    pCtx.save();pCtx.globalAlpha=s.a;
+    pCtx.beginPath();pCtx.arc(s.x,s.y,s.r,0,Math.PI*2);
+    pCtx.fillStyle=s.col;pCtx.fill();
+    pCtx.restore();
+  }
+  requestAnimationFrame(partLoop);
+}
+partLoop();
+
+// === Reset ===
+resetBtn.addEventListener('click',function(e){
+  e.stopPropagation();
+  score=0;boomCount=0;combo=0;rage=0;
+  scoreEl.textContent='💥 0';
+  boomEl.textContent='已炸 0 个';
+  updateRage();
+  spawnTargets();
+});
+
+// Init
+updateRage();
+spawnTargets();
+
+})();
+</script>
+</body>
+</html>

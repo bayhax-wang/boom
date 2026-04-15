@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>🔨 捶它！</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;}
+html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;font-family:'PingFang SC','Microsoft YaHei',sans-serif;}
+
+#bg{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;}
+
+#ui{position:fixed;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none;}
+#header{pointer-events:auto;text-align:center;padding:16px 15px 0;}
+#title{font-size:clamp(22px,5vw,32px);color:#fff;text-shadow:0 0 20px rgba(255,180,50,.4);}
+#subtitle{font-size:13px;color:rgba(255,255,255,.35);margin-top:4px;}
+
+#score-bar{pointer-events:auto;position:fixed;bottom:0;left:0;width:100%;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;background:linear-gradient(transparent,rgba(0,0,0,.5));}
+#score{font-size:18px;color:#ffdd57;font-weight:700;}
+#hit-count{font-size:14px;color:rgba(255,255,255,.5);}
+
+/* Things to smash */
+.thing{
+  position:absolute;z-index:2;pointer-events:auto;cursor:pointer;
+  font-size:clamp(52px,14vw,80px);
+  filter:drop-shadow(0 4px 15px rgba(0,0,0,.5));
+  transition:transform .05s;
+  will-change:transform;
+}
+.thing:active{transform:scale(.85);}
+
+/* Crack overlay on hit */
+.crack{
+  position:absolute;z-index:3;pointer-events:none;
+  font-size:clamp(48px,13vw,75px);
+  opacity:.7;
+  animation:crackFade .5s ease-out forwards;
+}
+@keyframes crackFade{0%{opacity:.7;transform:scale(1);}100%{opacity:0;transform:scale(1.3);}}
+
+/* Shatter pieces */
+.shard{
+  position:fixed;z-index:10;pointer-events:none;
+  font-size:clamp(18px,5vw,28px);
+  animation:shardFly .7s ease-out forwards;
+}
+@keyframes shardFly{
+  0%{opacity:1;transform:translate(0,0) rotate(0deg) scale(1);}
+  100%{opacity:0;transform:translate(var(--tx),var(--ty)) rotate(var(--tr)) scale(.3);}
+}
+
+/* Hammer cursor effect */
+.hammer-hit{
+  position:fixed;z-index:20;pointer-events:none;
+  font-size:50px;
+  animation:hammerSwing .25s ease-out forwards;
+  transform-origin:bottom right;
+}
+@keyframes hammerSwing{0%{transform:rotate(-30deg) scale(1.2);opacity:1;}100%{transform:rotate(10deg) scale(.8);opacity:0;}}
+
+/* HP bar on things */
+.hp-bar{
+  position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);
+  width:50px;height:5px;background:rgba(255,255,255,.15);border-radius:3px;overflow:hidden;
+}
+.hp-fill{height:100%;background:linear-gradient(90deg,#ff4757,#ff6b81);border-radius:3px;transition:width .15s;width:100%;}
+
+/* Damage number */
+.dmg-pop{
+  position:fixed;z-index:12;pointer-events:none;
+  font-size:22px;font-weight:900;
+  color:#ff4757;
+  text-shadow:0 0 8px rgba(255,71,87,.5),-1px -1px 0 rgba(0,0,0,.4);
+  animation:dmgPop .6s ease-out forwards;
+}
+@keyframes dmgPop{0%{transform:translateY(0) scale(.8);opacity:1;}100%{transform:translateY(-50px) scale(1.1);opacity:0;}}
+
+/* Screen shake */
+.shake{animation:shake .15s ease-in-out;}
+@keyframes shake{0%,100%{transform:translate(0)}25%{transform:translate(-4px,3px)}50%{transform:translate(4px,-3px)}75%{transform:translate(-3px,-4px)}}
+
+/* Smash streak */
+#streak{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-size:clamp(60px,15vw,120px);font-weight:900;color:#ff4757;text-shadow:0 0 40px rgba(255,71,87,.7);pointer-events:none;z-index:15;opacity:0;}
+#streak.flash{opacity:1;transition:none;}
+#streak.fade{opacity:0;transition:opacity .6s;}
+
+/* Progress */
+#rage-wrap{pointer-events:auto;position:fixed;top:68px;left:50%;transform:translateX(-50%);width:clamp(150px,40vw,220px);z-index:5;}
+#rage-label{font-size:11px;color:rgba(255,255,255,.35);text-align:center;margin-bottom:3px;}
+#rage-track{width:100%;height:8px;background:rgba(255,255,255,.1);border-radius:4px;overflow:hidden;}
+#rage-fill{width:0%;height:100%;background:linear-gradient(90deg,#ffa502,#ff4757,#ff0000);border-radius:4px;transition:width .2s;}
+#rage-text{font-size:12px;color:rgba(255,255,255,.45);text-align:center;margin-top:3px;}
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<div id="ui">
+  <div id="header">
+    <div id="title">🔨 捶它！</div>
+    <div id="subtitle">使劲捶，捶碎为止</div>
+  </div>
+  <div id="rage-wrap">
+    <div id="rage-label">暴怒值</div>
+    <div id="rage-track"><div id="rage-fill"></div></div>
+    <div id="rage-text">热身中</div>
+  </div>
+  <div id="streak"></div>
+  <div id="score-bar">
+    <span id="score">🔨 0</span>
+    <span id="hit-count">已碎 0 个</span>
+  </div>
+</div>
+<script>
+(function(){
+'use strict';
+
+// === BG ===
+var bgC=document.getElementById('bg'),bgX=bgC.getContext('2d'),W,H;
+function resize(){W=bgC.width=innerWidth;H=bgC.height=innerHeight;}
+resize();addEventListener('resize',function(){resize();spawnThings();});
+var pts=[];for(var i=0;i<30;i++)pts.push({x:Math.random()*2e3,y:Math.random()*2e3,r:Math.random()*1.5+.3,a:Math.random()*.2+.05,vy:-(Math.random()*.2+.05),tw:Math.random()*6.28,ts:Math.random()*.015+.005});
+function bgLoop(){bgX.fillStyle='#1a1a2e';bgX.fillRect(0,0,W,H);for(var i=0;i<pts.length;i++){var p=pts[i];p.y+=p.vy;p.tw+=p.ts;if(p.y<-5){p.y=H+5;p.x=Math.random()*W;}bgX.beginPath();bgX.arc(p.x%W,p.y,p.r,0,6.28);bgX.fillStyle='rgba(255,160,80,'+(p.a*(.5+.5*Math.sin(p.tw)))+')';bgX.fill();}requestAnimationFrame(bgLoop);}
+bgLoop();
+
+// === Audio ===
+var ac=null;
+function initA(){if(!ac)try{ac=new(AudioContext||webkitAudioContext)();}catch(e){}}
+function sndHit(heavy){
+  initA();if(!ac)return;var n=ac.currentTime;
+  var o=ac.createOscillator(),g=ac.createGain();
+  o.type='square';o.frequency.setValueAtTime(heavy?100:180,n);o.frequency.exponentialRampToValueAtTime(30,n+.15);
+  g.gain.setValueAtTime(heavy?.3:.18,n);g.gain.exponentialRampToValueAtTime(.001,n+.18);
+  o.connect(g);g.connect(ac.destination);o.start(n);o.stop(n+.18);
+  // crack noise
+  var buf=ac.createBuffer(1,ac.sampleRate*.08|0||4000,ac.sampleRate);
+  var d=buf.getChannelData(0);for(var i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,1.5);
+  var ns=ac.createBufferSource(),ng=ac.createGain();
+  ns.buffer=buf;ng.gain.setValueAtTime(heavy?.2:.12,n);ng.gain.exponentialRampToValueAtTime(.001,n+.12);
+  ns.connect(ng);ng.connect(ac.destination);ns.start(n);
+}
+function sndBreak(){
+  initA();if(!ac)return;var n=ac.currentTime;
+  // glass shatter
+  var buf=ac.createBuffer(1,ac.sampleRate*.25|0||11000,ac.sampleRate);
+  var d=buf.getChannelData(0);for(var i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,3)*.8;
+  var ns=ac.createBufferSource(),ng=ac.createGain();
+  ns.buffer=buf;ng.gain.setValueAtTime(.3,n);ng.gain.exponentialRampToValueAtTime(.001,n+.3);
+  ns.connect(ng);ng.connect(ac.destination);ns.start(n);
+  // low thud
+  var o=ac.createOscillator(),g=ac.createGain();
+  o.type='sine';o.frequency.setValueAtTime(60,n);o.frequency.exponentialRampToValueAtTime(15,n+.3);
+  g.gain.setValueAtTime(.25,n);g.gain.exponentialRampToValueAtTime(.001,n+.35);
+  o.connect(g);g.connect(ac.destination);o.start(n);o.stop(n+.35);
+}
+
+// === State ===
+var score=0,broken=0,combo=0,comboT=null,rage=0;
+var THINGS=['🏠','🚗','📱','💻','⏰','📚','🧱','🪑','🛒','🎒','📦','🧸','📺','🫖','🍳','🪟','🧊','🎈','💡','🔔','🧲','🗑️','🏫','🏢','🎮','🖥️','🪣','🧹'];
+var SHARDS=['💔','✨','⚡','🔥','💫'];
+var RAGE_LV=[{min:0,t:'热身中'},{min:20,t:'越来越暴躁'},{min:50,t:'拳头硬了！'},{min:80,t:'无双模式！！'},{min:100,t:'🔥 毁灭一切 🔥'}];
+
+var $score=document.getElementById('score'),$hc=document.getElementById('hit-count');
+var $streak=document.getElementById('streak');
+var $rf=document.getElementById('rage-fill'),$rt=document.getElementById('rage-text');
+var ui=document.getElementById('ui');
+
+// === Things ===
+var things=[];
+function rndEmoji(){return THINGS[Math.random()*THINGS.length|0];}
+
+function spawnThings(){
+  things.forEach(function(t){if(t.el&&t.el.parentNode)t.el.parentNode.removeChild(t.el);});
+  things=[];
+  var n=Math.min(W*H/28000|0,10);if(n<4)n=4;
+  var safeT=100,safeB=60;
+  for(var i=0;i<n;i++){
+    var el=document.createElement('div');
+    el.className='thing';
+    el.textContent=rndEmoji();
+    var tx=Math.random()*(W-90)+20,ty=safeT+Math.random()*(H-safeT-safeB-70);
+    el.style.left=tx+'px';el.style.top=ty+'px';
+    // HP bar
+    var hpBar=document.createElement('div');hpBar.className='hp-bar';
+    var hpFill=document.createElement('div');hpFill.className='hp-fill';
+    hpBar.appendChild(hpFill);el.appendChild(hpBar);
+    ui.appendChild(el);
+    var obj={el:el,hpFill:hpFill,hp:3,maxHp:3,x:tx,y:ty};
+    (function(o){
+      o.el.addEventListener('click',function(ev){hit(ev,o);});
+      o.el.addEventListener('touchstart',function(ev){ev.preventDefault();var t=ev.touches[0];hit({clientX:t.clientX,clientY:t.clientY},o);},{passive:false});
+    })(obj);
+    things.push(obj);
+  }
+}
+
+function hit(ev,obj){
+  var x=ev.clientX,y=ev.clientY;
+
+  // Hammer animation
+  var hm=document.createElement('div');
+  hm.className='hammer-hit';hm.textContent='🔨';
+  hm.style.left=(x-25)+'px';hm.style.top=(y-50)+'px';
+  document.body.appendChild(hm);
+  setTimeout(function(){hm.remove();},300);
+
+  // Shake
+  document.body.classList.remove('shake');
+  void document.body.offsetWidth;
+  document.body.classList.add('shake');
+
+  // Combo
+  combo++;clearTimeout(comboT);
+  comboT=setTimeout(function(){combo=0;},1200);
+
+  var isHeavy=rage>=80;
+  var dmg=isHeavy?2:1;
+  obj.hp-=dmg;
+
+  // HP bar update
+  var pct=Math.max(0,obj.hp/obj.maxHp*100);
+  obj.hpFill.style.width=pct+'%';
+  if(pct<40)obj.hpFill.style.background='linear-gradient(90deg,#ff0000,#ff4757)';
+
+  // Damage number
+  var dp=document.createElement('div');
+  dp.className='dmg-pop';
+  dp.textContent='-'+dmg+(combo>=3?' 💢':'');
+  dp.style.left=(x-15)+'px';dp.style.top=(y-20)+'px';
+  document.body.appendChild(dp);
+  setTimeout(function(){dp.remove();},700);
+
+  // Crack effect
+  var ck=document.createElement('div');
+  ck.className='crack';ck.textContent='💢';
+  ck.style.left=(obj.x)+'px';ck.style.top=(obj.y)+'px';
+  ui.appendChild(ck);
+  setTimeout(function(){ck.remove();},500);
+
+  sndHit(isHeavy);
+
+  // Vibrate
+  if(navigator.vibrate)navigator.vibrate(isHeavy?40:20);
+
+  if(obj.hp<=0){
+    // BROKEN!
+    smash(obj,x,y);
+  } else {
+    // Wobble
+    obj.el.style.transform='rotate('+(Math.random()*20-10)+'deg)';
+    setTimeout(function(){obj.el.style.transform='';},150);
+  }
+
+  // Score
+  var pts=5;
+  if(obj.hp<=0)pts+=15; // break bonus
+  if(combo>=10)pts+=20;
+  else if(combo>=5)pts+=10;
+  if(isHeavy)pts=pts*2;
+  score+=pts;
+
+  // Rage
+  rage=Math.min(100,rage+4);
+  updateRage();
+
+  // UI
+  $score.textContent='🔨 '+score;
+
+  // Streak
+  if(combo>=5){
+    $streak.textContent=combo+'连击！';
+    $streak.className='flash';
+    $streak.id='streak';
+    setTimeout(function(){$streak.className='fade';$streak.id='streak';},350);
+  }
+}
+
+function smash(obj,cx,cy){
+  broken++;
+  $hc.textContent='已碎 '+broken+' 个';
+  sndBreak();
+  if(navigator.vibrate)navigator.vibrate([30,20,50]);
+
+  // Shard particles
+  var emoji=obj.el.textContent.replace(/[^\p{Emoji}]/gu,'').charAt(0)||'💔';
+  for(var i=0;i<6;i++){
+    var sh=document.createElement('div');
+    sh.className='shard';
+    sh.textContent=Math.random()>.5?SHARDS[Math.random()*SHARDS.length|0]:emoji;
+    var ang=Math.random()*Math.PI*2,dist=60+Math.random()*80;
+    sh.style.left=(cx-15)+'px';sh.style.top=(cy-15)+'px';
+    sh.style.setProperty('--tx',Math.cos(ang)*dist+'px');
+    sh.style.setProperty('--ty',Math.sin(ang)*dist+'px');
+    sh.style.setProperty('--tr',(Math.random()*720-360)+'deg');
+    document.body.appendChild(sh);
+    setTimeout(function(s){return function(){s.remove();};}(sh),800);
+  }
+
+  // Respawn as new thing
+  obj.el.textContent=rndEmoji();
+  obj.hp=3+Math.min(broken/5|0,3); // gets tougher
+  obj.maxHp=obj.hp;
+  // Re-add HP bar
+  var hpBar=document.createElement('div');hpBar.className='hp-bar';
+  var hpFill=document.createElement('div');hpFill.className='hp-fill';
+  hpBar.appendChild(hpFill);obj.el.appendChild(hpBar);
+  obj.hpFill=hpFill;
+  // New position
+  var safeT=100,safeB=60;
+  var nx=Math.random()*(W-90)+20,ny=safeT+Math.random()*(H-safeT-safeB-70);
+  obj.el.style.left=nx+'px';obj.el.style.top=ny+'px';
+  obj.x=nx;obj.y=ny;
+}
+
+function updateRage(){
+  $rf.style.width=rage+'%';
+  var lv=RAGE_LV[0];
+  for(var i=RAGE_LV.length-1;i>=0;i--){if(rage>=RAGE_LV[i].min){lv=RAGE_LV[i];break;}}
+  $rt.textContent=lv.t;
+}
+setInterval(function(){if(rage>0){rage=Math.max(0,rage-1.5);updateRage();}},500);
+
+// Click empty space
+ui.addEventListener('click',function(e){
+  if(e.target===ui||e.target.id==='header'||e.target.id==='title'||e.target.id==='subtitle'){
+    var hm=document.createElement('div');hm.className='hammer-hit';hm.textContent='🔨';
+    hm.style.left=(e.clientX-25)+'px';hm.style.top=(e.clientY-50)+'px';
+    document.body.appendChild(hm);setTimeout(function(){hm.remove();},300);
+    document.body.classList.remove('shake');void document.body.offsetWidth;document.body.classList.add('shake');
+    sndHit(false);
+    if(navigator.vibrate)navigator.vibrate(15);
+  }
+});
+
+updateRage();
+spawnThings();
+})();
+</script>
+</body>
+</html>

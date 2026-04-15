@@ -235,18 +235,12 @@ function boom(e,tObj){
   // Score popup
   var pop=document.createElement('div');
   pop.className='score-pop';
-  pop.textContent='+'+pts+(combo>=3?' x'+combo:'');
+  pop.textContent='+'+pts;
   pop.style.left=(x-20)+'px';pop.style.top=(y-30)+'px';
   document.body.appendChild(pop);
   setTimeout(function(){pop.remove();},900);
 
-  // Combo display
-  if(combo>=3){
-    comboEl.textContent=combo+'连炸！';
-    comboEl.className='flash';
-    comboEl.setAttribute('id','combo-display');
-    setTimeout(function(){comboEl.className='fade';comboEl.setAttribute('id','combo-display');},400);
-  }
+
 
   // Replace target
   var el=tObj.el;
@@ -260,7 +254,6 @@ function boom(e,tObj){
 
   // Sound
   sndBoom();
-  if(combo>=3) sndCombo();
   if(rage>=78&&rage<82) sndRageUp();
   // Vibrate if supported
   if(navigator.vibrate)navigator.vibrate(30);
